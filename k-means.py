@@ -1,5 +1,5 @@
 import sys
-import timeit
+import time
 import random
 import numpy as np
 import cv2
@@ -10,13 +10,13 @@ import math
 INPUT_IMAGE =  "teste5.bmp"
 
 TAM_QUAD_VISIVEL = 800
-TAM_QUAD_GRID = 16
+TAM_QUAD_GRID = 4
 
 VISUALISA = False
 AUMENTA = False
 N_AUMENTA = 2
 
-N_CORES = 4
+N_CORES = 2
 MAX_INTERACOES = 10
 
 def dist_euclidiana(x1, y1, z1, x2, y2, z2):
@@ -31,33 +31,44 @@ def k_means(img, n):
         cores[i][:] = img[random.randint(0, img.shape[0] - 1)][random.randint(0, img.shape[1] - 1)][:]
 
     #mapa pra saber a separacao dos grupos inicializado em um grupo que nao existe
-    mapa = np.full((TAM_QUAD_GRID, TAM_QUAD_GRID), n + 1)
+    mapa = np.zeros((TAM_QUAD_GRID, TAM_QUAD_GRID), dtype = np.int8)
 
     moveu = True
     interacoes = 0
+    somas = np.zeros((n, 3 , 2)) # n = numero de grupos, 3 = num de canais, 2 = a soma geral e o numero de elementos somados
+    for z in range(3):
+        somas[0][z][0] += np.sum(img[:,:,z])
+        somas[0][z][1] += (img.shape[0] * img.shape[1]) 
 
     while moveu and interacoes < MAX_INTERACOES:
         moveu = False
         interacoes += 1
-        somas = np.zeros((n, 3 , 2)) # n = numero de grupos, 3 = num de canais, 2 = a soma geral e o numero de elementos somados
         
         #escolhendo a cor mais perto pra cada ponto
         for y in range(TAM_QUAD_GRID):
             for x in range(TAM_QUAD_GRID):
-                min = dist_euclidiana(img[y][x][0], img[y][x][1], img[y][x][2], cores[0][0], cores[0][1], cores[0][2])
-                grupo = 0
-                for i in range(1 , n):
+                #inicializa no valor do antigo grupo como menor distancia
+                min = dist_euclidiana(img[y][x][0], img[y][x][1], img[y][x][2], cores[mapa[y][x]][0], cores[mapa[y][x]][1], cores[mapa[y][x]][2])
+                grupo = mapa[y][x]
+                
+                for i in range(n):
                     dist = dist_euclidiana(img[y][x][0], img[y][x][1], img[y][x][2], cores[i][0], cores[i][1], cores[i][2])
                     if (dist < min):
                         min = dist
                         grupo = i
-                if (mapa[y][x] != grupo):
-                    moveu = True
-                    mapa[y][x] = grupo
-                #armazenando valores pra nao ter que passar de novo na matriz
-                for z in range(3):
-                    somas[grupo][z][0] += img[y][x][z]
-                    somas[grupo][z][1] += 1
+                        moveu = True
+
+                        #desconta do grupo anterior
+                        for z in range(3):
+                            somas[mapa[y][x]][z][0] -= img[y][x][z]
+                            somas[mapa[y][x]][z][1] -= 1
+                        
+                        mapa[y][x] = grupo
+
+                        #adiciona no novo grupo
+                        for z in range(3):
+                            somas[mapa[y][x]][z][0] += img[y][x][z]
+                            somas[mapa[y][x]][z][1] += 1
         
         #Recalculando as cores, as centroides
         for i in range(n):
@@ -70,8 +81,7 @@ def k_means(img, n):
     # quando terminado trocando as cores aintigas pelas novas na imagem
     for y in range(TAM_QUAD_GRID):
         for x in range(TAM_QUAD_GRID):
-            for z in range(3):
-                img[y][x][z] = cores[mapa[y][x]][z]
+                img[y][x][:] = cores[mapa[y][x]][:]
     
     return img
 
@@ -85,16 +95,15 @@ def main():
     #convertendo em float
     img = img.astype(np.float32) / 255
 
+
     img_grid = np.zeros((TAM_QUAD_GRID, TAM_QUAD_GRID, 3), dtype=np.float32)
     img_saida = np.zeros_like(img)
 
+    inicio = time.perf_counter()
     #percorrendo a imagem com a janela saltitante das Grids
     for y in range(0, img.shape[0] - TAM_QUAD_GRID + 1, TAM_QUAD_GRID):
         for x in range(0, img.shape[1] - TAM_QUAD_GRID + 1, TAM_QUAD_GRID):
-            for xj in range(TAM_QUAD_GRID):
-                for yj in range(TAM_QUAD_GRID):
-                    for z in range(img.shape[2]):
-                        img_grid[yj][xj][z] = img[y + yj][x + xj][z]
+            img_grid[:,:,:] = img[y : y + TAM_QUAD_GRID , x : x + TAM_QUAD_GRID , :]
             
             if VISUALISA:
                 resized_img = cv2.resize(img_grid, (TAM_QUAD_VISIVEL, TAM_QUAD_VISIVEL), interpolation=cv2.INTER_NEAREST)
@@ -105,10 +114,7 @@ def main():
             #chamando o k_means para cada grid interada
             img_grid = k_means(img_grid, N_CORES)
 
-            for xj in range(TAM_QUAD_GRID):
-                for yj in range(TAM_QUAD_GRID):
-                    for z in range(img.shape[2]):
-                        img_saida[y + yj][x + xj][z] = img_grid[yj][xj][z]
+            img_saida[y : y + TAM_QUAD_GRID , x : x + TAM_QUAD_GRID , :] = img_grid[:,:,:]
 
             if VISUALISA:
                 resized_img = cv2.resize(img_grid, (TAM_QUAD_VISIVEL, TAM_QUAD_VISIVEL), interpolation=cv2.INTER_NEAREST)
@@ -116,6 +122,9 @@ def main():
                 cv2.waitKey()
                 cv2.destroyAllWindows()
 
+
+    fim = time.perf_counter()
+    print("tempo: " + str(fim - inicio))
     if AUMENTA:
         img = cv2.resize(img, (img.shape[1] * N_AUMENTA , img.shape[0] * N_AUMENTA), interpolation=cv2.INTER_NEAREST)
         img_saida = cv2.resize(img_saida, (img_saida.shape[1] * N_AUMENTA , img_saida.shape[0] * N_AUMENTA), interpolation=cv2.INTER_NEAREST)
